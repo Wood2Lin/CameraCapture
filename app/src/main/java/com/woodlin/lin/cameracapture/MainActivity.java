@@ -10,11 +10,24 @@ import android.os.Environment;
 import android.os.Handler;
 import android.support.v7.app.AppCompatActivity;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Display;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.WindowManager;
+import android.widget.ImageView;
 import android.widget.Toast;
+
+import org.opencv.android.BaseLoaderCallback;
+import org.opencv.android.LoaderCallbackInterface;
+import org.opencv.android.OpenCVLoader;
+import org.opencv.android.Utils;
+import org.opencv.core.Core;
+import org.opencv.core.Mat;
+import org.opencv.core.Point;
+import org.opencv.core.Scalar;
+import org.opencv.core.Size;
+import org.opencv.imgproc.Imgproc;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -32,13 +45,37 @@ public class MainActivity extends AppCompatActivity {
     Thread thread;
     boolean isPreview = false;
     Handler handler;
-    Bitmap bitmap,bitmap1 = null;
+//    Bitmap bitmap,bitmap1 = null;
+    private Mat mIntermediateMat;
+    ImageView iv;
+
+    private BaseLoaderCallback mLoaderCallback = new BaseLoaderCallback(this) {
+        @Override
+        public void onManagerConnected(int status) {
+            switch (status) {
+                case LoaderCallbackInterface.SUCCESS: {
+
+                }
+                break;
+                default: {
+                    super.onManagerConnected(status);
+                }
+                break;
+            }
+        }
+    };
+
+    public MainActivity() {
+//        Log.i(TAG, "Instantiated new " + this.getClass());
+    }
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         surfaceView = (SurfaceView)findViewById(R.id.camera);
-
+        iv = (ImageView)findViewById(R.id.iv);
         WindowManager wm = getWindowManager();
         Display display = wm.getDefaultDisplay();
         DisplayMetrics metrics = new DisplayMetrics();
@@ -85,7 +122,7 @@ public class MainActivity extends AppCompatActivity {
             // 此处默认打开后置摄像头。
             // 通过传入参数可以打开前置摄像头
             camera = Camera.open(0);  //①
-            camera.setDisplayOrientation(90);
+//            camera.setDisplayOrientation(90);
         }
         if (camera != null && !isPreview)
         {
@@ -167,6 +204,7 @@ public class MainActivity extends AppCompatActivity {
             // 根据拍照所得的数据创建位图
             final Bitmap bm = BitmapFactory.decodeByteArray(data, 0,
                     data.length);
+                onCameraFrame(bm);
 //            String fileName=getFileNmae();
 //            if (fileName==null) return;
 //            // 创建一个位于SD卡上的文件
@@ -180,17 +218,17 @@ public class MainActivity extends AppCompatActivity {
 //                bm.compress(Bitmap.CompressFormat.JPEG, 100,
 //                        outStream);
 //                outStream.close();
-                if (bitmap == null){
-                    bitmap = bm;
-                }else {
-                    bitmap = bm;
-                    bitmap1 = bm;
-                    String str = BitmapCompare.similarity(bitmap,bitmap1);
-//                    String str = PictureContrast.similarity(bitmap,bitmap1);
-
-                    Toast.makeText(MainActivity.this, str,
-                            Toast.LENGTH_SHORT).show();
-                }
+//                if (bitmap == null){
+//                    bitmap = bm;
+//                }else {
+//                    bitmap = bm;
+//                    bitmap1 = bm;
+//                    String str = BitmapCompare.similarity(bitmap,bitmap1);
+////                    String str = PictureContrast.similarity(bitmap,bitmap1);
+//
+//                    Toast.makeText(MainActivity.this, str,
+//                            Toast.LENGTH_SHORT).show();
+//                }
 
 //            }
 //            catch (IOException e)
@@ -231,6 +269,7 @@ public class MainActivity extends AppCompatActivity {
             public void run() {
                 try {
                     sleep(2000);
+                    mIntermediateMat = new Mat();
                     capture();
                 } catch (InterruptedException e) {
                     e.printStackTrace();
@@ -239,5 +278,65 @@ public class MainActivity extends AppCompatActivity {
         };
 
         thread.start();
+    }
+
+    public void onCameraFrame(Bitmap bitmap) {
+        Mat rgba = new Mat();
+        Utils.bitmapToMat(bitmap,rgba);
+        Size sizeRgba = rgba.size();
+
+        Mat rgbaInnerWindow;
+
+        int rows = (int) sizeRgba.height;
+        int cols = (int) sizeRgba.width;
+
+        int left = cols / 8;
+        int top = rows / 8;
+
+        int width = cols * 3 / 4;
+        int height = rows * 3 / 4;
+
+//        rgbaInnerWindow = rgba
+//                .submat(top, top + height, left, left + width);
+        rgbaInnerWindow = rgba.clone();
+        Imgproc.cvtColor(rgba, rgbaInnerWindow,
+                Imgproc.COLOR_RGB2GRAY);
+        Mat circles = rgbaInnerWindow.clone();
+//        rgbaInnerWindow = rgba
+//                .submat(top, top + height, left, left + width);
+        Imgproc.GaussianBlur(rgbaInnerWindow, rgbaInnerWindow, new Size(5,
+                5), 2, 2);
+        Imgproc.Canny(rgbaInnerWindow, mIntermediateMat, 80, 90);
+        Imgproc.HoughCircles(mIntermediateMat, circles,
+                Imgproc.CV_HOUGH_GRADIENT, 1, 200, 80, 30, 100, 200);
+        Imgproc.cvtColor(mIntermediateMat, rgbaInnerWindow,
+                Imgproc.COLOR_GRAY2BGRA, 4);
+
+        for (int x = 0; x < circles.cols(); x++) {
+            Log.e("个数:", circles.size() + "");
+            double vCircle[] = circles.get(0, x);
+            if (vCircle == null)
+                break;
+            Point pt = new Point(Math.round(vCircle[0]),
+                    Math.round(vCircle[1]));
+            int radius = (int) Math.round(vCircle[2]);
+            Log.d("cv", pt + " radius " + radius);
+            Core.circle(rgba, pt, 3, new Scalar(0, 0, 255), 3);
+            Core.circle(rgba, pt, radius, new Scalar(255, 0, 0),
+                    5);
+        }
+        Bitmap bm = bitmap;
+        Utils.matToBitmap(rgba,bm);
+        iv.setImageBitmap(bm);
+        rgbaInnerWindow.release();
+
+    }
+
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        OpenCVLoader.initAsync(OpenCVLoader.OPENCV_VERSION_2_4_3, this,
+                mLoaderCallback);
     }
 }
